@@ -104,6 +104,32 @@ void Polkit1Backend::sendWindowHandle(const QString &action, const QString &hand
     });
 }
 
+void Polkit1Backend::sendActivationToken(const QString &action, QWindow *window)
+{
+    const auto requestedSerial = KWaylandExtras::lastInputSerial(window);
+    auto tokenFuture = KWaylandExtras::xdgActivationToken(window, requestedSerial, {});
+    tokenFuture.then([action](const QString &token) {
+        if (token.isEmpty()) {
+            return;
+        }
+        QDBusMessage methodCall =
+            QDBusMessage::createMethodCall(c_kdeAgentService, c_kdeAgentPath, c_kdeAgentInterface, QLatin1String("setActivationTokenForAction"));
+        methodCall << action;
+        methodCall << token;
+
+        const auto reply = QDBusConnection::sessionBus().asyncCall(methodCall);
+        auto *watcher = new QDBusPendingCallWatcher(reply);
+        connect(watcher, &QDBusPendingCallWatcher::finished, [watcher, token, action] {
+            watcher->deleteLater();
+
+            QDBusPendingReply<> reply = *watcher;
+            if (reply.isError()) {
+                qCWarning(KAUTH) << "Failed to set activation token" << token << "for" << action << reply.error().message();
+            }
+        });
+    });
+}
+
 Action::AuthStatus Polkit1Backend::authorizeAction(const QString &action)
 {
     Q_UNUSED(action)
@@ -213,3 +239,4 @@ QVariantMap Polkit1Backend::backendDetails(const DetailsMap &details)
 #include "Polkit1Backend.moc"
 
 #include "moc_Polkit1Backend.cpp"
+
